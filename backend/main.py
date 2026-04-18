@@ -53,6 +53,23 @@ class AnalyzeResponse(BaseModel):
     error: Optional[str] = None
 
 
+def find_ffmpeg_dir():
+    """Find ffmpeg binary directory."""
+    import shutil
+    ff = shutil.which("ffmpeg")
+    if ff:
+        return str(Path(ff).parent)
+    # Winget default install path
+    winget_path = Path.home() / "AppData/Local/Microsoft/WinGet/Packages"
+    for d in winget_path.glob("Gyan.FFmpeg*"):
+        for b in d.rglob("ffmpeg.exe"):
+            return str(b.parent)
+    return None
+
+
+FFMPEG_DIR = find_ffmpeg_dir()
+
+
 def download_audio(url: str, output_dir: str) -> str:
     """Download audio from URL using yt-dlp. Returns path to downloaded file."""
     output_template = os.path.join(output_dir, "audio.%(ext)s")
@@ -66,6 +83,9 @@ def download_audio(url: str, output_dir: str) -> str:
         "-o", output_template,
         url
     ]
+    if FFMPEG_DIR:
+        cmd.insert(-1, "--ffmpeg-location")
+        cmd.insert(-1, FFMPEG_DIR)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"yt-dlp failed: {result.stderr}")
@@ -140,6 +160,46 @@ def parse_results(raw: dict) -> dict:
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "song-finder-analyzer"}
+
+
+class TitleRequest(BaseModel):
+    url: str
+
+
+@app.post("/title")
+async def get_title(req: TitleRequest):
+    """Extract video/track title from a URL using yt-dlp (no download)."""
+    try:
+        cmd = [
+            sys.executable, "-m", "yt_dlp",
+            "--skip-download", "--no-playlist",
+            "--dump-json", "--quiet", "--no-warnings",
+            req.url
+        ]
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        )
+
+        if result.returncode != 0 or not result.stdout.strip():
+            raise HTTPException(status_code=422, detail="Could not extract title from URL")
+
+        info = json.loads(result.stdout)
+        artist = info.get("artist") or info.get("uploader") or info.get("channel") or ""
+        track = info.get("track") or info.get("title") or ""
+
+        if not track:
+            raise HTTPException(status_code=422, detail="Could not extract title")
+
+        title = f"{artist} - {track}" if artist else track
+        return {"title": title}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="Failed to parse yt-dlp output")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Title extraction timed out")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)

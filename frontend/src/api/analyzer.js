@@ -39,3 +39,25 @@ export async function checkBackendHealth() {
     return false;
   }
 }
+
+/**
+ * Extract video/track title from a URL using the backend's yt-dlp.
+ * @param {string} url
+ * @returns {Promise<string>} The extracted title
+ */
+export async function getUrlTitle(url) {
+  const base = getBackendUrl();
+  const resp = await fetch(`${base}/title`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to extract title`);
+  }
+
+  const data = await resp.json();
+  return data.title;
+}

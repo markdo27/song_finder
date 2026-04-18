@@ -6,7 +6,7 @@ import Player from './components/Player';
 import PlaylistBuilder from './components/PlaylistBuilder';
 import SettingsModal from './components/SettingsModal';
 import { searchTracks, lookupByUrl, getSimilarTracks, getTrack } from './api/cosine';
-import { analyzeTrack, checkBackendHealth } from './api/analyzer';
+import { analyzeTrack, checkBackendHealth, getUrlTitle } from './api/analyzer';
 
 // Skeleton Loader
 function SkeletonGrid() {
@@ -92,16 +92,36 @@ export default function App() {
     setSimilarTracks([]);
 
     try {
+      // Try direct URL lookup in cosine.club database
       const tracks = await lookupByUrl(url);
-      if (!tracks.length) throw new Error('No tracks found for that URL. The track may not be in the cosine.club database yet.');
+      if (tracks.length) {
+        const first = tracks[0];
+        const { source, similar } = await getSimilarTracks(first.id);
+        setSourceTrack(source || first);
+        setSimilarTracks(similar);
+        return;
+      }
+    } catch {
+      // URL not in database — fall through to title-based search
+    }
 
-      // Use first matched track as source, then fetch similar
-      const first = tracks[0];
-      const { source, similar } = await getSimilarTracks(first.id);
-      setSourceTrack(source || first);
+    // Fallback: extract video title via backend, then text search
+    try {
+      const title = await getUrlTitle(url);
+      const results = await searchTracks(title, 1);
+      if (!results.length) {
+        throw new Error(`No match found for "${title}". The track may not be in the cosine.club database.`);
+      }
+      const { source, similar } = await getSimilarTracks(results[0].id);
+      setSourceTrack(source || results[0]);
       setSimilarTracks(similar);
     } catch (e) {
-      setError(e.message);
+      const msg = e.message || '';
+      if (msg.includes('Could not extract title') || msg.includes('Failed to extract')) {
+        setError('Video is unavailable or private. Please try a different URL.');
+      } else {
+        setError(msg || 'No tracks found for that URL.');
+      }
     } finally {
       setLoading(false);
     }

@@ -3,7 +3,7 @@
  * Docs: https://registry.scalar.com/@cosine/apis/cosineclub-api
  */
 
-const BASE_URL = 'https://cosine.club/api/v1';
+const BASE_URL = '/cosine-api';
 
 function getApiKey() {
   return localStorage.getItem('cosine_api_key') || '';
@@ -17,7 +17,6 @@ async function request(path, options = {}) {
     ...options,
     headers: {
       'Authorization': `Bearer ${apiKey}`,
-      'User-Agent': 'song-finder/1.0',
       'Content-Type': 'application/json',
       ...(options.headers || {}),
     },
