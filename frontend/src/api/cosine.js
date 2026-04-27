@@ -103,3 +103,11 @@ export async function getPlaylist(id) {
   const data = await request(`/playlists/${id}`);
   return data.data;
 }
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Convert cosine score (0–1) to integer percentage */
+export function scoreToPercent(score) {
+  return Math.round((score || 0) * 100);
+}
+
