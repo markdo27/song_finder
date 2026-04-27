@@ -1,23 +1,33 @@
 /**
  * cosine.js — cosine.club API wrapper
  * Docs: https://registry.scalar.com/@cosine/apis/cosineclub-api
+ *
+ * In dev: calls /cosine-api/* → proxied by Vite to https://cosine.club/api/v1
+ * In production (Vercel): calls https://cosine.club/api/v1 directly (CORS supported)
  */
 
-const BASE_URL = '/cosine-api';
+const BASE_URL = import.meta.env.PROD
+  ? 'https://cosine.club/api/v1'
+  : '/cosine-api';
 
-function getApiKey() {
+export function getApiKey() {
   return localStorage.getItem('cosine_api_key') || '';
+}
+
+export function hasApiKey() {
+  return !!getApiKey();
 }
 
 async function request(path, options = {}) {
   const apiKey = getApiKey();
-  if (!apiKey) throw new Error('No API key set. Please add your cosine.club API key in Settings.');
+  if (!apiKey) throw new Error('No API key. Add your cosine.club API key in Settings.');
 
   const resp = await fetch(`${BASE_URL}${path}`, {
     ...options,
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
+      'User-Agent': 'song-finder/1.0',
       ...(options.headers || {}),
     },
   });
@@ -30,10 +40,11 @@ async function request(path, options = {}) {
   return resp.json();
 }
 
+// ── Track endpoints ──────────────────────────────────────────────────────────
+
 /**
- * Search tracks by artist / title text query.
- * @param {string} query
- * @param {number} limit
+ * Search tracks by text query.
+ * Returns array of track objects: { id, name, artist, track, source, ... }
  */
 export async function searchTracks(query, limit = 10) {
   const params = new URLSearchParams({ q: query, limit });
@@ -42,8 +53,8 @@ export async function searchTracks(query, limit = 10) {
 }
 
 /**
- * Lookup track(s) by URL (YouTube, SoundCloud, Discogs, Bandcamp).
- * @param {string} url
+ * Lookup track(s) by URL (YouTube, Discogs, SoundCloud).
+ * Returns array of track objects.
  */
 export async function lookupByUrl(url) {
   const params = new URLSearchParams({ url });
@@ -53,8 +64,7 @@ export async function lookupByUrl(url) {
 
 /**
  * Get similar tracks for a given track ID.
- * @param {string} trackId
- * @param {object} filters  { limit, start_year, end_year, min_have, ... }
+ * Returns { source, similar, meta }
  */
 export async function getSimilarTracks(trackId, filters = {}) {
   const params = new URLSearchParams({ limit: 20, ...filters });
@@ -68,27 +78,13 @@ export async function getSimilarTracks(trackId, filters = {}) {
 
 /**
  * Get track details by ID.
- * @param {string} trackId
  */
 export async function getTrack(trackId) {
   const data = await request(`/tracks/${trackId}`);
   return data.data;
 }
 
-/**
- * Bulk search: find similar tracks for multiple "Artist - Track" strings.
- * @param {string[]} tracks  e.g. ["Joy Orbison - Hyph Mngo"]
- * @param {number} similar_limit
- */
-export async function bulkSearch(tracks, similar_limit = 5) {
-  const data = await request('/search/bulk', {
-    method: 'POST',
-    body: JSON.stringify({ tracks, similar_limit }),
-  });
-  return data.data?.results || [];
-}
-
-// --- Playlist CRUD ---
+// ── Playlist endpoints ───────────────────────────────────────────────────────
 
 export async function listPlaylists() {
   const data = await request('/playlists');
@@ -110,7 +106,7 @@ export async function deletePlaylist(id) {
 export async function addTrackToPlaylist(playlistId, trackId) {
   const data = await request(`/playlists/${playlistId}/tracks`, {
     method: 'POST',
-    body: JSON.stringify({ track_id: trackId }),
+    body: JSON.stringify({ track_id: String(trackId) }),
   });
   return data.data;
 }
@@ -124,18 +120,19 @@ export async function getPlaylist(id) {
   return data.data;
 }
 
-/** Convert cosine score (0-1) to percentage string */
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Convert cosine score (0–1) to integer percentage */
 export function scoreToPercent(score) {
   return Math.round((score || 0) * 100);
 }
 
-/** Detect URL type for icon display */
+/** Detect source type from URL for icon display */
 export function detectUrlSource(url = '') {
   if (!url) return null;
   if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
   if (url.includes('soundcloud.com')) return 'soundcloud';
-  if (url.includes('bandcamp.com')) return 'bandcamp';
-  if (url.includes('open.spotify.com')) return 'spotify';
   if (url.includes('discogs.com')) return 'discogs';
+  if (url.includes('bandcamp.com')) return 'bandcamp';
   return 'link';
 }

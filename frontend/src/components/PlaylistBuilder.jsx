@@ -1,104 +1,92 @@
 import React, { useState, useEffect, useCallback } from 'react';
-
-const STORAGE_KEY = 'songfinder_playlists';
-
-function loadFromStorage() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-function saveToStorage(playlists) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(playlists));
-}
-
-function generateId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-}
+import {
+  listPlaylists,
+  createPlaylist,
+  deletePlaylist,
+  addTrackToPlaylist,
+  removeTrackFromPlaylist,
+  getPlaylist,
+} from '../api/cosine';
 
 export default function PlaylistBuilder({ onTrackPlay, apiKeySet }) {
-  const [playlists, setPlaylists] = useState(loadFromStorage);
+  const [playlists, setPlaylists] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [activeTracks, setActiveTracks] = useState([]);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Load playlists on mount / when key is set
   useEffect(() => {
-    if (playlists.length > 0 && !activeId) {
-      setActiveId(playlists[0].id);
-    }
-  }, [playlists, activeId]);
+    if (!apiKeySet) return;
+    setLoading(true);
+    listPlaylists()
+      .then(pls => {
+        setPlaylists(pls);
+        if (pls.length > 0 && !activeId) setActiveId(pls[0].id);
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [apiKeySet]);
 
+  // Load active playlist tracks
   useEffect(() => {
-    if (activeId) {
-      const pl = playlists.find(p => p.id === activeId);
-      setActiveTracks(pl?.tracks || []);
-    } else {
-      setActiveTracks([]);
-    }
-  }, [activeId, playlists]);
+    if (!activeId || !apiKeySet) { setActiveTracks([]); return; }
+    getPlaylist(activeId)
+      .then(pl => setActiveTracks(pl?.tracks || []))
+      .catch(() => setActiveTracks([]));
+  }, [activeId, apiKeySet]);
 
-  // Expose addTrack method via window (hacky but avoids prop drilling)
+  // Expose addTrack via window so TrackCard can call it without prop drilling
   useEffect(() => {
-    window.__songFinder_addToPlaylist = (track) => {
-      if (!activeId) {
-        alert('Create or select a playlist first!');
-        return;
+    window.__songFinder_addToPlaylist = async (track) => {
+      if (!activeId) { setError('Select a playlist first!'); return; }
+      try {
+        await addTrackToPlaylist(activeId, track.id);
+        // Refresh track list
+        const pl = await getPlaylist(activeId);
+        setActiveTracks(pl?.tracks || []);
+      } catch (e) {
+        setError(e.message);
       }
-      setPlaylists(prev => {
-        const updated = prev.map(p =>
-          p.id === activeId
-            ? { ...p, tracks: [...(p.tracks || []), track] }
-            : p
-        );
-        saveToStorage(updated);
-        return updated;
-      });
     };
     return () => { delete window.__songFinder_addToPlaylist; };
   }, [activeId]);
 
-  const handleCreate = (e) => {
+  const handleCreate = async (e) => {
     e?.preventDefault();
     if (!newName.trim()) return;
-    const newPl = { id: generateId(), name: newName.trim(), tracks: [] };
-    setPlaylists(prev => {
-      const updated = [...prev, newPl];
-      saveToStorage(updated);
-      return updated;
-    });
-    setActiveId(newPl.id);
-    setActiveTracks([]);
-    setCreating(false);
-    setNewName('');
-  };
-
-  const handleRemoveTrack = (trackId) => {
-    if (!activeId) return;
-    setPlaylists(prev => {
-      const updated = prev.map(p =>
-        p.id === activeId
-          ? { ...p, tracks: (p.tracks || []).filter(t => t.id !== trackId) }
-          : p
-      );
-      saveToStorage(updated);
-      return updated;
-    });
-  };
-
-  const handleDeletePlaylist = (id) => {
-    if (!confirm('Delete this playlist?')) return;
-    setPlaylists(prev => {
-      const updated = prev.filter(p => p.id !== id);
-      saveToStorage(updated);
-      return updated;
-    });
-    if (activeId === id) {
-      setActiveId(null);
+    try {
+      const pl = await createPlaylist(newName.trim(), false);
+      setPlaylists(prev => [...prev, pl]);
+      setActiveId(pl.id);
       setActiveTracks([]);
+      setCreating(false);
+      setNewName('');
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleDeletePlaylist = async (id) => {
+    if (!confirm('Delete this playlist?')) return;
+    try {
+      await deletePlaylist(id);
+      setPlaylists(prev => prev.filter(p => p.id !== id));
+      if (activeId === id) { setActiveId(null); setActiveTracks([]); }
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleRemoveTrack = async (trackId) => {
+    if (!activeId) return;
+    try {
+      await removeTrackFromPlaylist(activeId, trackId);
+      setActiveTracks(prev => prev.filter(t => t.id !== String(trackId)));
+    } catch (e) {
+      setError(e.message);
     }
   };
 
@@ -113,7 +101,7 @@ export default function PlaylistBuilder({ onTrackPlay, apiKeySet }) {
         <div className="playlist-empty">
           <div className="playlist-empty-icon">🔑</div>
           <div className="playlist-empty-text">
-            Add your Spotify credentials in Settings to enable playlists.
+            Add your cosine.club API key in Settings to enable playlists.
           </div>
         </div>
       </aside>
@@ -163,7 +151,9 @@ export default function PlaylistBuilder({ onTrackPlay, apiKeySet }) {
 
       {/* Playlist selector */}
       <div className="playlist-list">
-        {playlists.length === 0 ? (
+        {loading ? (
+          <div style={{ padding: 'var(--space-sm)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading…</div>
+        ) : playlists.length === 0 ? (
           <div style={{ padding: 'var(--space-sm)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>No playlists yet</div>
         ) : (
           playlists.map(pl => (
@@ -174,7 +164,7 @@ export default function PlaylistBuilder({ onTrackPlay, apiKeySet }) {
             >
               <span style={{ fontSize: '0.85rem' }}>📁</span>
               <span className="playlist-item-name">{pl.name}</span>
-              <span className="playlist-item-count">{(pl.tracks || []).length}</span>
+              <span className="playlist-item-count">{pl.track_count ?? activeTracks.length}</span>
               <button
                 style={{ marginLeft: 4, fontSize: '0.72rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', opacity: 0.6 }}
                 onClick={e => { e.stopPropagation(); handleDeletePlaylist(pl.id); }}
@@ -204,7 +194,7 @@ export default function PlaylistBuilder({ onTrackPlay, apiKeySet }) {
                 <div className="playlist-track-name">{track.track}</div>
                 <div className="playlist-track-artist">{track.artist}</div>
               </div>
-              {(track.preview_url || track.video_uri) && (
+              {track.video_uri && (
                 <button
                   className="card-btn play"
                   style={{ fontSize: '0.72rem', padding: '3px 8px' }}

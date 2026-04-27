@@ -6,13 +6,11 @@ import Player from './components/Player';
 import PlaylistBuilder from './components/PlaylistBuilder';
 import SettingsModal from './components/SettingsModal';
 import {
-  searchTracks as spotifySearch,
-  lookupByUrl as spotifyLookupUrl,
-  getSimilarTracks as spotifyGetSimilar,
-  getTrack as spotifyGetTrack,
-  hasCredentials as spotifyHasCredentials,
-  isSpotifyUrl,
-} from './api/spotify';
+  searchTracks,
+  lookupByUrl,
+  getSimilarTracks,
+  hasApiKey,
+} from './api/cosine';
 import { analyzeTrack, checkBackendHealth, getUrlTitle } from './api/analyzer';
 
 // Skeleton Loader
@@ -42,7 +40,7 @@ export default function App() {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState(null);
   const [analysisResult, setAnalysisResult] = useState(null);
-  const [analysisCache, setAnalysisCache] = useState({}); // trackId → result
+  const [analysisCache, setAnalysisCache] = useState({});
   const [analyzingId, setAnalyzingId] = useState(null);
 
   // Player state
@@ -51,39 +49,31 @@ export default function App() {
   // UI state
   const [showSettings, setShowSettings] = useState(false);
   const [backendOnline, setBackendOnline] = useState(null);
-
-  const spotifyConfigured = spotifyHasCredentials();
+  const [apiKeySet, setApiKeySet] = useState(hasApiKey());
 
   // Check backend health on mount
   useEffect(() => {
     checkBackendHealth().then(ok => setBackendOnline(ok));
   }, []);
 
-  // Show settings on first launch if no Spotify credentials
+  // Show settings on first launch if no API key
   useEffect(() => {
-    if (!spotifyConfigured) setShowSettings(true);
+    if (!hasApiKey()) setShowSettings(true);
   }, []);
 
   // --- Search by text query ---
-  const handleSearch = useCallback(async (queryOrId, isDirectId = false) => {
+  const handleSearch = useCallback(async (query) => {
     setError(null);
     setLoading(true);
     setSourceTrack(null);
     setSimilarTracks([]);
 
     try {
-      let track;
-      if (isDirectId) {
-        track = await spotifyGetTrack(queryOrId);
-        if (!track) throw new Error(`No track found for ID "${queryOrId}"`);
-      } else {
-        const results = await spotifySearch(queryOrId, 1);
-        if (!results.length) throw new Error(`No track found for "${queryOrId}"`);
-        track = results[0];
-      }
-
-      const { source, similar } = await spotifyGetSimilarTracks(track.id);
-      setSourceTrack(source || track);
+      const results = await searchTracks(query, 1);
+      if (!results.length) throw new Error(`No track found for "${query}"`);
+      const first = results[0];
+      const { source, similar } = await getSimilarTracks(first.id);
+      setSourceTrack(source || first);
       setSimilarTracks(similar);
     } catch (e) {
       setError(e.message);
@@ -92,7 +82,7 @@ export default function App() {
     }
   }, []);
 
-  // --- Lookup by URL (YouTube, SoundCloud, Spotify, etc.) ---
+  // --- Lookup by URL (YouTube, Discogs, SoundCloud) ---
   const handleLookup = useCallback(async (url) => {
     setError(null);
     setLoading(true);
@@ -100,34 +90,30 @@ export default function App() {
     setSimilarTracks([]);
 
     try {
-      if (isSpotifyUrl(url)) {
-        const tracks = await spotifyLookupUrl(url);
-        if (!tracks.length) throw new Error('Spotify track not found');
+      // cosine.club supports YouTube, Discogs, SoundCloud URLs directly
+      const tracks = await lookupByUrl(url);
+      if (tracks.length) {
         const first = tracks[0];
-        const { source, similar } = await spotifyGetSimilarTracks(first.id);
+        const { source, similar } = await getSimilarTracks(first.id);
         setSourceTrack(source || first);
         setSimilarTracks(similar);
         return;
       }
-    } catch (e) {
-      setError(e.message);
-      setLoading(false);
-      return;
+    } catch (urlErr) {
+      // URL lookup failed — fall through to title extraction
     }
 
-    // YouTube / SoundCloud / other: extract title via backend, then search Spotify
+    // Fallback: extract title via backend yt-dlp → search cosine
     try {
       const title = await getUrlTitle(url);
-      const results = await spotifySearch(title, 1);
-      if (!results.length) {
-        throw new Error(`No match found on Spotify for "${title}". The track may not be available on Spotify.`);
-      }
-      const { source, similar } = await spotifyGetSimilarTracks(results[0].id);
+      const results = await searchTracks(title, 1);
+      if (!results.length) throw new Error(`No match found for "${title}"`);
+      const { source, similar } = await getSimilarTracks(results[0].id);
       setSourceTrack(source || results[0]);
       setSimilarTracks(similar);
     } catch (e) {
       const msg = e.message || '';
-      if (msg.includes('Could not extract title') || msg.includes('Failed to extract')) {
+      if (msg.includes('Could not extract') || msg.includes('Failed to extract')) {
         setError('Video is unavailable or private. Please try a different URL.');
       } else {
         setError(msg || 'No tracks found for that URL.');
@@ -137,9 +123,8 @@ export default function App() {
     }
   }, []);
 
-  // --- Analyze track (bpm-detector) ---
+  // --- Analyze track (local bpm-detector backend) ---
   const handleAnalyze = useCallback(async (track) => {
-    // Check cache first
     if (analysisCache[track.id]) {
       setAnalysisTrack(track);
       setAnalysisResult(analysisCache[track.id]);
@@ -150,7 +135,7 @@ export default function App() {
     if (!track.video_uri) {
       setAnalysisTrack(track);
       setAnalysisResult(null);
-      setAnalysisError('No audio URL available for this track to analyze.');
+      setAnalysisError('No audio URL available for this track.');
       return;
     }
 
@@ -167,7 +152,7 @@ export default function App() {
     } catch (e) {
       setAnalysisError(
         backendOnline === false
-          ? 'Analyzer backend is offline. Run "npm run dev" to start it.'
+          ? 'Analyzer backend is offline. Run "python backend/main.py" to start it.'
           : e.message
       );
     } finally {
@@ -181,7 +166,7 @@ export default function App() {
     if (window.__songFinder_addToPlaylist) {
       window.__songFinder_addToPlaylist(track);
     } else {
-      alert('Add your Spotify credentials in Settings to enable playlists.');
+      setError('Add your cosine.club API key in Settings to enable playlists.');
     }
   }, []);
 
@@ -192,7 +177,7 @@ export default function App() {
   };
 
   return (
-    <div className={`app-layout${!spotifyConfigured ? ' no-sidebar' : ''}`}>
+    <div className={`app-layout${!apiKeySet ? ' no-sidebar' : ''}`}>
       {/* ── Header ── */}
       <header className="header">
         <div className="logo">
@@ -231,7 +216,6 @@ export default function App() {
 
       {/* ── Main Content ── */}
       <main className="main-content">
-        {/* Search */}
         <SearchBar
           onSearch={handleSearch}
           onLookup={handleLookup}
@@ -239,16 +223,20 @@ export default function App() {
         />
 
         {/* API key prompt */}
-        {!spotifyConfigured && !showSettings && (
+        {!apiKeySet && !showSettings && (
           <div className="error-banner" style={{ margin: '0 0 var(--space-lg)', background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.25)', color: 'var(--text-accent)' }}>
-            🔑 Add your Spotify Client ID & Secret in{' '}
+            🔑 Add your{' '}
+            <a href="https://cosine.club/account/api" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-secondary)' }}>
+              cosine.club API key
+            </a>
+            {' '}in{' '}
             <button
               style={{ color: 'var(--accent-secondary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 'inherit' }}
               onClick={() => setShowSettings(true)}
             >
               Settings
-            </button>{' '}
-            to start finding similar tracks.
+            </button>
+            {' '}to start finding similar tracks.
           </div>
         )}
 
@@ -260,13 +248,12 @@ export default function App() {
           </div>
         )}
 
-        {/* Loading skeletons */}
+        {/* Loading */}
         {loading && <SkeletonGrid />}
 
         {/* Results */}
         {!loading && sourceTrack && (
           <>
-            {/* Source track banner */}
             <div className="source-track-banner">
               <div className="source-thumb">🎵</div>
               <div className="source-info">
@@ -274,7 +261,7 @@ export default function App() {
                 <div className="source-artist">{sourceTrack.artist}</div>
               </div>
               <div className="source-actions">
-                {(sourceTrack.video_uri || sourceTrack.preview_url) && (
+                {sourceTrack.video_uri && (
                   <button className="card-btn play" onClick={() => setPlayingTrack(sourceTrack)}>
                     ▶ Play
                   </button>
@@ -285,7 +272,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Similar tracks grid */}
             <div className="section-header">
               <span className="section-title">Similar Tracks</span>
               <span className="section-count">{similarTracks.length} results</span>
@@ -315,19 +301,18 @@ export default function App() {
             <div className="empty-icon">🎵</div>
             <div className="empty-title">Find music that sounds like what you love</div>
             <div className="empty-text">
-              Paste a YouTube, SoundCloud, Bandcamp, or Spotify URL — or type an artist + track name.
-              We'll find similar tracks using Spotify's recommendation engine and audio feature analysis,
-              and show you BPM, key, chords, and more.
+              Paste a YouTube, Discogs, or SoundCloud URL — or type an artist + track name.
+              Powered by <strong>cosine.club</strong> vector similarity search.
             </div>
           </div>
         )}
       </main>
 
       {/* ── Playlist Sidebar ── */}
-      {spotifyConfigured && (
+      {apiKeySet && (
         <PlaylistBuilder
           onTrackPlay={setPlayingTrack}
-          apiKeySet={spotifyConfigured}
+          apiKeySet={apiKeySet}
         />
       )}
 
@@ -351,6 +336,7 @@ export default function App() {
         <SettingsModal
           onClose={() => setShowSettings(false)}
           onSave={() => {
+            setApiKeySet(hasApiKey());
             checkBackendHealth().then(ok => setBackendOnline(ok));
           }}
         />
