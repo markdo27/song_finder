@@ -1,51 +1,39 @@
 /**
  * cosine.js — cosine.club API wrapper
- *
- * In dev:  calls /cosine-api/* → Vite proxies to cosine.club (key from .env.local)
- * In prod: calls /api/cosine/* → Vercel serverless proxy adds the key server-side
- *          (no API key needed in the browser at all)
+ * Calls https://cosine.club/api/v1 directly.
+ * API key is baked in at build time via VITE_COSINE_API_KEY.
+ * In local dev Vite also proxies /cosine-api as a fallback.
  */
 
-const IS_PROD = import.meta.env.PROD;
-const BASE_URL = IS_PROD ? '/api/cosine' : '/cosine-api';
+const BASE_URL = 'https://cosine.club/api/v1';
+const BAKED_KEY = import.meta.env.VITE_COSINE_API_KEY || '';
 
-// In production the key lives in the server-side proxy env var.
-// In dev it comes from .env.local VITE_COSINE_API_KEY or localStorage.
 export function getApiKey() {
-  return (
-    localStorage.getItem('cosine_api_key') ||
-    import.meta.env.VITE_COSINE_API_KEY ||
-    ''
-  );
+  return localStorage.getItem('cosine_api_key') || BAKED_KEY;
 }
 
 export function hasApiKey() {
-  // In production the proxy always has the key → always "available"
-  return IS_PROD || !!getApiKey();
+  return !!getApiKey();
 }
 
 async function request(path, options = {}) {
-  const headers = {
-    'Content-Type': 'application/json',
-    'User-Agent': 'song-finder/1.0',
-    ...(options.headers || {}),
-  };
-
-  // Dev only: attach key from env/localStorage (proxy doesn't add it)
-  if (!IS_PROD) {
-    const apiKey = getApiKey();
-    if (!apiKey) throw new Error('No API key. Add your cosine.club API key in Settings.');
-    headers['Authorization'] = `Bearer ${apiKey}`;
-  }
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error('No API key — open Settings and add your cosine.club key.');
 
   const resp = await fetch(`${BASE_URL}${path}`, {
     ...options,
-    headers,
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
   });
 
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
-    throw new Error(err.message || `API error ${resp.status}`);
+    const e = new Error(err.message || `API error ${resp.status}`);
+    e.status = resp.status;
+    throw e;
   }
 
   return resp.json();
@@ -114,19 +102,4 @@ export async function removeTrackFromPlaylist(playlistId, trackId) {
 export async function getPlaylist(id) {
   const data = await request(`/playlists/${id}`);
   return data.data;
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-export function scoreToPercent(score) {
-  return Math.round((score || 0) * 100);
-}
-
-export function detectUrlSource(url = '') {
-  if (!url) return null;
-  if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
-  if (url.includes('soundcloud.com')) return 'soundcloud';
-  if (url.includes('discogs.com')) return 'discogs';
-  if (url.includes('bandcamp.com')) return 'bandcamp';
-  return 'link';
 }

@@ -69,24 +69,23 @@ export default function App() {
     setSimilarTracks([]);
 
     try {
-      // Fetch top 5 candidates — cosine may return 404 for /similar on some tracks
       const results = await searchTracks(query, 5);
-      if (!results.length) throw new Error(`No track found for "${query}"`);
+      if (!results.length) throw new Error(`"${query}" not found on cosine.club. Try Artist – Track format.`);
 
-      let found = false;
       for (const candidate of results) {
         try {
           const { source, similar } = await getSimilarTracks(candidate.id);
           if (similar.length > 0) {
             setSourceTrack(source || candidate);
             setSimilarTracks(similar);
-            found = true;
-            break;
+            return;
           }
-        } catch { /* this track has no similar data — try next */ }
+        } catch (e) {
+          if (e.status !== 404) throw e; // surface auth/network errors
+          // 404 = no similar vectors for this track, try next
+        }
       }
-
-      if (!found) throw new Error(`No similar tracks found for "${query}". Try a more specific search.`);
+      throw new Error(`No similar tracks found for "${query}". cosine.club focuses on underground/electronic music — try a more specific track name.`);
     } catch (e) {
       setError(e.message);
     } finally {

@@ -2,7 +2,7 @@
   "buildCommand": "cd frontend && npm install && npm run build",
   "outputDirectory": "frontend/dist",
   "env": {
-    "COSINE_API_KEY": "cosine_vbf0XDNU_kLV5iKbt3uznQY9gANV5A5N3oiZlzGe8"
+    "VITE_COSINE_API_KEY": "cosine_vbf0XDNU_kLV5iKbt3uznQY9gANV5A5N3oiZlzGe8"
   },
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" }
