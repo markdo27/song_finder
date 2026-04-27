@@ -69,12 +69,24 @@ export default function App() {
     setSimilarTracks([]);
 
     try {
-      const results = await searchTracks(query, 1);
+      // Fetch top 5 candidates — cosine may return 404 for /similar on some tracks
+      const results = await searchTracks(query, 5);
       if (!results.length) throw new Error(`No track found for "${query}"`);
-      const first = results[0];
-      const { source, similar } = await getSimilarTracks(first.id);
-      setSourceTrack(source || first);
-      setSimilarTracks(similar);
+
+      let found = false;
+      for (const candidate of results) {
+        try {
+          const { source, similar } = await getSimilarTracks(candidate.id);
+          if (similar.length > 0) {
+            setSourceTrack(source || candidate);
+            setSimilarTracks(similar);
+            found = true;
+            break;
+          }
+        } catch { /* this track has no similar data — try next */ }
+      }
+
+      if (!found) throw new Error(`No similar tracks found for "${query}". Try a more specific search.`);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -89,6 +101,39 @@ export default function App() {
     setSourceTrack(null);
     setSimilarTracks([]);
 
+    // Helper: generate progressively simplified search queries from a raw video title.
+    // Handles K-pop, J-pop, anime OST titles with Korean/Japanese + English mixed.
+    function* generateSearchQueries(raw) {
+      const VIDEO_SUFFIX = /[\s[\](（）【】]*\b(official\s*)?(music\s*video|mv|m\/v|live(\s+(version|performance|mv|m\/v))?|lyrics?\s*(video)?|audio|visualizer|teaser|lyric|official(\s+(video|audio|clip))?|performance\s*video|highlight|short\s*ver\.?|full\s*ver\.?)\b[\s[\](（）【】]*/gi;
+
+      // 1. Try the raw title first
+      yield raw;
+
+      // 2. Strip video-type suffixes (e.g. "LIVE M/V", "Official Video")
+      const stripped = raw.replace(VIDEO_SUFFIX, ' ').replace(/\s{2,}/g, ' ').trim();
+      if (stripped && stripped !== raw) yield stripped;
+
+      // 3. Extract English/Latin text from parentheses — best for K-pop/J-pop
+      //    "비비 (BIBI) - 책방오빠 (Scott and Zelda)" → ["BIBI", "Scott and Zelda"]
+      const latinInParens = [...raw.matchAll(/[(\[（【]([A-Za-z][^)\]）】]{1,60})[)\]）】]/g)]
+        .map(m => m[1].trim())
+        .filter(Boolean);
+      if (latinInParens.length >= 2) {
+        yield latinInParens.join(' - ');       // "BIBI - Scott and Zelda"
+        yield latinInParens.join(' ');         // "BIBI Scott and Zelda"
+      } else if (latinInParens.length === 1) {
+        yield latinInParens[0];
+      }
+
+      // 4. Keep only Latin/ASCII characters (remove all CJK/non-ASCII)
+      const latinOnly = raw
+        .replace(/[^\x00-\x7F\s\-()'",]/g, ' ')  // remove non-ASCII
+        .replace(VIDEO_SUFFIX, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+      if (latinOnly && latinOnly !== raw && latinOnly.length > 2) yield latinOnly;
+    }
+
     try {
       // ① Clean YouTube URLs — strip playlist/index params that break lookup
       let cleanUrl = url;
@@ -98,7 +143,7 @@ export default function App() {
           const v = u.searchParams.get('v');
           cleanUrl = v
             ? `https://www.youtube.com/watch?v=${v}`
-            : url.split('&')[0]; // fallback: drop everything after first &
+            : url.split('&')[0];
         } catch { /* malformed URL — use as-is */ }
       }
 
@@ -115,44 +160,50 @@ export default function App() {
       } catch { /* not found in cosine — fall through to title search */ }
 
       // ③ Extract title via YouTube oEmbed (free, no key, CORS-enabled)
-      let title = null;
+      let rawTitle = null;
       if (cleanUrl.includes('youtube.com') || cleanUrl.includes('youtu.be')) {
         try {
-          const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(cleanUrl)}&format=json`;
-          const resp = await fetch(oembedUrl);
-          if (resp.ok) {
-            const data = await resp.json();
-            title = data.title || null;
-          }
+          const resp = await fetch(
+            `https://www.youtube.com/oembed?url=${encodeURIComponent(cleanUrl)}&format=json`
+          );
+          if (resp.ok) rawTitle = (await resp.json()).title || null;
         } catch { /* oEmbed failed */ }
       }
 
       // ④ Fallback: local backend yt-dlp (only if running)
-      if (!title && backendOnline) {
-        try {
-          title = await getUrlTitle(cleanUrl);
-        } catch { /* backend unavailable */ }
+      if (!rawTitle && backendOnline) {
+        try { rawTitle = await getUrlTitle(cleanUrl); } catch { /* unavailable */ }
       }
 
-      if (!title) {
+      if (!rawTitle) {
         setError('Could not identify this video. Try searching by Artist – Track name instead.');
         return;
       }
 
-      // ⑤ Search cosine with the extracted title
-      const results = await searchTracks(title, 1);
-      if (!results.length) {
-        setError(`No match found on cosine.club for "${title}". Try searching by name.`);
-        return;
+      // ⑤ Try multiple cleaned query variants; for each, try up to 3 results
+      for (const query of generateSearchQueries(rawTitle)) {
+        try {
+          const results = await searchTracks(query, 3);
+          for (const candidate of results) {
+            try {
+              const { source, similar } = await getSimilarTracks(candidate.id);
+              if (similar.length > 0) {
+                setSourceTrack(source || candidate);
+                setSimilarTracks(similar);
+                return;
+              }
+            } catch { /* no similar data for this track — try next */ }
+          }
+        } catch { /* query failed — try next variant */ }
       }
-      const { source, similar } = await getSimilarTracks(results[0].id);
-      setSourceTrack(source || results[0]);
-      setSimilarTracks(similar);
+
+      setError(`No match found for "${rawTitle}". Try searching by Artist – Track name directly.`);
     } catch (e) {
+      setError(e.message || 'Something went wrong. Try searching by name.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [backendOnline]);
 
   // --- Analyze track (local bpm-detector backend) ---
   const handleAnalyze = useCallback(async (track) => {
