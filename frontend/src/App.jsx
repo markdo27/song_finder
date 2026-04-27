@@ -90,34 +90,65 @@ export default function App() {
     setSimilarTracks([]);
 
     try {
-      // cosine.club supports YouTube, Discogs, SoundCloud URLs directly
-      const tracks = await lookupByUrl(url);
-      if (tracks.length) {
-        const first = tracks[0];
-        const { source, similar } = await getSimilarTracks(first.id);
-        setSourceTrack(source || first);
-        setSimilarTracks(similar);
+      // ① Clean YouTube URLs — strip playlist/index params that break lookup
+      let cleanUrl = url;
+      if (url.includes('youtube.com') || url.includes('youtu.be')) {
+        try {
+          const u = new URL(url);
+          const v = u.searchParams.get('v');
+          cleanUrl = v
+            ? `https://www.youtube.com/watch?v=${v}`
+            : url.split('&')[0]; // fallback: drop everything after first &
+        } catch { /* malformed URL — use as-is */ }
+      }
+
+      // ② Try cosine.club URL lookup with cleaned URL
+      try {
+        const tracks = await lookupByUrl(cleanUrl);
+        if (tracks.length) {
+          const first = tracks[0];
+          const { source, similar } = await getSimilarTracks(first.id);
+          setSourceTrack(source || first);
+          setSimilarTracks(similar);
+          return;
+        }
+      } catch { /* not found in cosine — fall through to title search */ }
+
+      // ③ Extract title via YouTube oEmbed (free, no key, CORS-enabled)
+      let title = null;
+      if (cleanUrl.includes('youtube.com') || cleanUrl.includes('youtu.be')) {
+        try {
+          const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(cleanUrl)}&format=json`;
+          const resp = await fetch(oembedUrl);
+          if (resp.ok) {
+            const data = await resp.json();
+            title = data.title || null;
+          }
+        } catch { /* oEmbed failed */ }
+      }
+
+      // ④ Fallback: local backend yt-dlp (only if running)
+      if (!title && backendOnline) {
+        try {
+          title = await getUrlTitle(cleanUrl);
+        } catch { /* backend unavailable */ }
+      }
+
+      if (!title) {
+        setError('Could not identify this video. Try searching by Artist – Track name instead.');
         return;
       }
-    } catch (urlErr) {
-      // URL lookup failed — fall through to title extraction
-    }
 
-    // Fallback: extract title via backend yt-dlp → search cosine
-    try {
-      const title = await getUrlTitle(url);
+      // ⑤ Search cosine with the extracted title
       const results = await searchTracks(title, 1);
-      if (!results.length) throw new Error(`No match found for "${title}"`);
+      if (!results.length) {
+        setError(`No match found on cosine.club for "${title}". Try searching by name.`);
+        return;
+      }
       const { source, similar } = await getSimilarTracks(results[0].id);
       setSourceTrack(source || results[0]);
       setSimilarTracks(similar);
     } catch (e) {
-      const msg = e.message || '';
-      if (msg.includes('Could not extract') || msg.includes('Failed to extract')) {
-        setError('Video is unavailable or private. Please try a different URL.');
-      } else {
-        setError(msg || 'No tracks found for that URL.');
-      }
     } finally {
       setLoading(false);
     }
