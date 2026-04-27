@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { searchTracks, lookupByUrl } from '../api/cosine';
+import { searchTracks as spotifySearch, isSpotifyUrl } from '../api/spotify';
 
 const SOURCE_ICONS = {
   youtube: '▶',
@@ -14,7 +14,7 @@ function detectSource(url = '') {
   if (url.includes('youtube') || url.includes('youtu.be')) return 'youtube';
   if (url.includes('soundcloud')) return 'soundcloud';
   if (url.includes('bandcamp')) return 'bandcamp';
-  if (url.includes('spotify')) return 'spotify';
+  if (url.includes('open.spotify.com') || url.startsWith('spotify:track:')) return 'spotify';
   if (url.includes('discogs')) return 'discogs';
   return null;
 }
@@ -46,7 +46,7 @@ export default function SearchBar({ onSearch, onLookup, loading }) {
     debounceRef.current = setTimeout(async () => {
       try {
         setSuggestionLoading(true);
-        const results = await searchTracks(value, 6);
+        const results = await spotifySearch(value, 6);
         setSuggestions(results);
         setShowSuggestions(results.length > 0);
       } catch {
@@ -144,13 +144,13 @@ export default function SearchBar({ onSearch, onLookup, loading }) {
         )}
       </div>
 
-      <div className="search-hint">
-        <span>▶ YouTube</span>
-        <span>☁ SoundCloud</span>
-        <span>B Bandcamp</span>
-        <span>♫ Spotify</span>
-        <span>· or type Artist — Track to search</span>
-      </div>
+        <div className="search-hint">
+          <span>▶ YouTube</span>
+          <span>☁ SoundCloud</span>
+          <span>B Bandcamp</span>
+          <span>♫ Spotify</span>
+          <span>· or type Artist — Track to search Spotify</span>
+        </div>
     </form>
   );
 }

@@ -1,15 +1,30 @@
 import React, { useState } from 'react';
+import { configureSpotify } from '../api/spotify';
 
 export default function SettingsModal({ onClose, onSave }) {
-  const [apiKey, setApiKey] = useState(localStorage.getItem('cosine_api_key') || '');
+  const [clientId, setClientId] = useState(localStorage.getItem('spotify_client_id') || '');
+  const [clientSecret, setClientSecret] = useState(localStorage.getItem('spotify_client_secret') || '');
   const [backendUrl, setBackendUrl] = useState(localStorage.getItem('backend_url') || 'http://localhost:8000');
   const [saved, setSaved] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testError, setTestError] = useState('');
 
-  const handleSave = () => {
-    localStorage.setItem('cosine_api_key', apiKey.trim());
+  const handleSave = async () => {
+    localStorage.setItem('spotify_client_id', clientId.trim());
+    localStorage.setItem('spotify_client_secret', clientSecret.trim());
     localStorage.setItem('backend_url', backendUrl.trim() || 'http://localhost:8000');
-    setSaved(true);
-    setTimeout(() => { setSaved(false); onSave?.(); onClose?.(); }, 800);
+
+    setTesting(true);
+    setTestError('');
+    try {
+      await configureSpotify(clientId.trim(), clientSecret.trim());
+      setSaved(true);
+      setTimeout(() => { setSaved(false); onSave?.(); onClose?.(); }, 800);
+    } catch (e) {
+      setTestError(e.message);
+    } finally {
+      setTesting(false);
+    }
   };
 
   return (
@@ -21,25 +36,41 @@ export default function SettingsModal({ onClose, onSave }) {
         </div>
 
         <div className="settings-field">
-          <label className="settings-label" htmlFor="api-key-input">
-            cosine.club API Key
+          <label className="settings-label" htmlFor="spotify-client-id">
+            Spotify Client ID
           </label>
           <input
-            id="api-key-input"
+            id="spotify-client-id"
+            className="settings-input"
+            type="text"
+            value={clientId}
+            onChange={e => setClientId(e.target.value)}
+            placeholder="Your Spotify Client ID…"
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </div>
+
+        <div className="settings-field">
+          <label className="settings-label" htmlFor="spotify-client-secret">
+            Spotify Client Secret
+          </label>
+          <input
+            id="spotify-client-secret"
             className="settings-input"
             type="password"
-            value={apiKey}
-            onChange={e => setApiKey(e.target.value)}
-            placeholder="Your API key…"
+            value={clientSecret}
+            onChange={e => setClientSecret(e.target.value)}
+            placeholder="Your Spotify Client Secret…"
             spellCheck={false}
             autoComplete="off"
           />
           <div className="settings-hint">
-            Get your free API key at{' '}
-            <a href="https://cosine.club/account/api" target="_blank" rel="noopener noreferrer">
-              cosine.club/account/api
+            Create a free app at{' '}
+            <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener noreferrer">
+              developer.spotify.com/dashboard
             </a>{' '}
-            — 120 req/min, free.
+            to get your Client ID & Secret. Use Client Credentials OAuth.
           </div>
         </div>
 
@@ -62,13 +93,20 @@ export default function SettingsModal({ onClose, onSave }) {
           </div>
         </div>
 
+        {testError && (
+          <div className="error-banner" style={{ marginBottom: 'var(--space-md)', fontSize: '0.82rem' }}>
+            ⚠ {testError}
+          </div>
+        )}
+
         <div className="divider" />
 
         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 'var(--space-lg)', lineHeight: 1.6 }}>
           <strong style={{ color: 'var(--text-secondary)' }}>About this app:</strong><br />
-          Song Finder uses cosine.club's ML-powered vector similarity (1.9M+ track database) to find
-          tracks that <em>sound</em> similar — not just same genre tags. The local Python backend
-          runs deep audio analysis via bpm-detector on demand.
+          Song Finder uses Spotify's recommendation engine to find similar tracks,
+          then ranks them by audio feature similarity (energy, tempo, valence, etc.).
+          The local Python backend runs deep audio analysis via bpm-detector on demand.
+          Playlists are stored locally in your browser.
         </div>
 
         <div className="modal-footer">
@@ -77,8 +115,9 @@ export default function SettingsModal({ onClose, onSave }) {
             id="settings-save-btn"
             className="btn btn-primary"
             onClick={handleSave}
+            disabled={testing || !clientId.trim() || !clientSecret.trim()}
           >
-            {saved ? '✓ Saved!' : 'Save Settings'}
+            {testing ? 'Testing…' : saved ? '✓ Saved!' : 'Save Settings'}
           </button>
         </div>
       </div>

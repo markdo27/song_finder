@@ -19,7 +19,7 @@ export default function TrackCard({
   onAddToPlaylist,
 }) {
   const emoji = EMOJI_MAP[track.source] || '🎵';
-  const hasVideo = !!track.video_uri;
+  const hasVideo = !!(track.video_uri || track.preview_url);
 
   return (
     <div

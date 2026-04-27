@@ -1,0 +1,8 @@
+{
+  "buildCommand": "cd frontend && npm install && npm run build",
+  "outputDirectory": "frontend/dist",
+  "rewrites": [
+    { "source": "/api/spotify/lookup-url", "destination": "/api/spotify/lookup_url" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}

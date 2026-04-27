@@ -1,24 +1,35 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 export default function Player({ track, onClose }) {
   const [playing, setPlaying] = useState(false);
   const iframeRef = useRef(null);
+  const audioRef = useRef(null);
   const canvasRef = useRef(null);
   const animFrameRef = useRef(null);
   const barsRef = useRef(Array.from({ length: 20 }, () => Math.random() * 0.4 + 0.1));
 
-  // Extract YouTube video ID
   const videoId = track?.video_id || (track?.video_uri
     ? new URL(track.video_uri).searchParams.get('v') ||
       track.video_uri.split('youtu.be/')[1]?.split('?')[0]
     : null);
 
-  // Auto-play when track changes
+  const hasAudioPreview = !!(track?.preview_url);
+  const hasYouTube = !!(videoId);
+
   useEffect(() => {
     if (track) setPlaying(true);
   }, [track?.id]);
 
-  // Waveform animation
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (playing) {
+      audio.play().catch(() => setPlaying(false));
+    } else {
+      audio.pause();
+    }
+  }, [playing]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -65,7 +76,7 @@ export default function Player({ track, onClose }) {
   return (
     <div className="player-bar">
       {/* Hidden YouTube iframe */}
-      {videoId && (
+      {hasYouTube && (
         <div className="youtube-frame-container">
           <iframe
             ref={iframeRef}
@@ -75,6 +86,15 @@ export default function Player({ track, onClose }) {
             title="player"
           />
         </div>
+      )}
+
+      {/* Hidden audio for Spotify previews */}
+      {hasAudioPreview && !hasYouTube && (
+        <audio
+          ref={audioRef}
+          src={track.preview_url}
+          onEnded={() => setPlaying(false)}
+        />
       )}
 
       {/* Track info */}
@@ -96,14 +116,18 @@ export default function Player({ track, onClose }) {
 
       {/* Controls */}
       <div className="player-controls">
-        <button
-          id="player-play-pause"
-          className="player-btn play-pause"
-          onClick={() => setPlaying(p => !p)}
-          title={playing ? 'Pause' : 'Play'}
-        >
-          {playing ? '⏸' : '▶'}
-        </button>
+        {(hasYouTube || hasAudioPreview) ? (
+          <button
+            id="player-play-pause"
+            className="player-btn play-pause"
+            onClick={() => setPlaying(p => !p)}
+            title={playing ? 'Pause' : 'Play'}
+          >
+            {playing ? '⏸' : '▶'}
+          </button>
+        ) : (
+          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '0 8px' }}>No preview</span>
+        )}
         <button
           className="player-btn"
           onClick={onClose}
@@ -111,13 +135,13 @@ export default function Player({ track, onClose }) {
         >
           ✕
         </button>
-        {track.video_uri && (
+        {track.external_link && (
           <a
-            href={track.video_uri}
+            href={track.external_link}
             target="_blank"
             rel="noopener noreferrer"
             className="player-btn"
-            title="Open on YouTube"
+            title="Open in Spotify"
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', color: 'inherit' }}
           >
             ↗

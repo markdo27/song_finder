@@ -16,6 +16,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import spotify_api as spotify
+
 app = FastAPI(title="Song Finder Analyzer API", version="1.0.0")
 
 app.add_middleware(
@@ -200,6 +202,112 @@ async def get_title(req: TitleRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────
+# Spotify API Endpoints
+# ─────────────────────────────────────────────────────────────
+
+class SpotifyConfigRequest(BaseModel):
+    client_id: str
+    client_secret: str
+
+
+@app.post("/spotify/configure")
+async def configure_spotify(req: SpotifyConfigRequest):
+    """Store Spotify OAuth credentials (client ID + secret)."""
+    if not req.client_id or not req.client_secret:
+        raise HTTPException(status_code=400, detail="client_id and client_secret are required")
+    spotify.configure(req.client_id, req.client_secret)
+    try:
+        spotify._get_token()
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Spotify auth failed: {e}")
+    return {"status": "ok", "message": "Spotify credentials configured successfully"}
+
+
+class SpotifySearchRequest(BaseModel):
+    query: str
+    limit: int = 10
+
+
+@app.post("/spotify/search")
+async def spotify_search(req: SpotifySearchRequest):
+    """Search Spotify tracks by text query."""
+    if not spotify.is_configured():
+        raise HTTPException(status_code=400, detail="Spotify not configured. Add credentials in Settings.")
+    try:
+        results = spotify.search_track(req.query, limit=req.limit)
+        return {"data": results}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/spotify/track/{track_id}")
+async def spotify_get_track(track_id: str):
+    """Get a single Spotify track by ID."""
+    if not spotify.is_configured():
+        raise HTTPException(status_code=400, detail="Spotify not configured")
+    track = spotify.get_track(track_id)
+    if not track:
+        raise HTTPException(status_code=404, detail="Track not found")
+    return {"data": track}
+
+
+class SpotifySimilarRequest(BaseModel):
+    track_id: str
+    limit: int = 20
+
+
+@app.post("/spotify/similar")
+async def spotify_similar(req: SpotifySimilarRequest):
+    """
+    Find tracks similar to a given Spotify track ID.
+    Uses Spotify recommendations + audio feature similarity scoring.
+    Returns source track + ranked similar tracks with 0-1 scores.
+    """
+    if not spotify.is_configured():
+        raise HTTPException(status_code=400, detail="Spotify not configured")
+    try:
+        source, similar = spotify.find_similar_tracks(
+            {"id": req.track_id},
+            limit=req.limit
+        )
+        return {"data": {"source_track": source, "similar_tracks": similar}}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class SpotifyUrlLookupRequest(BaseModel):
+    url: str
+
+
+@app.post("/spotify/lookup-url")
+async def spotify_lookup_url(req: SpotifyUrlLookupRequest):
+    """
+    Extract track info from a Spotify URL (track, album, playlist).
+    For now, extracts track ID from track URLs.
+    """
+    if not spotify.is_configured():
+        raise HTTPException(status_code=400, detail="Spotify not configured")
+    track_id = spotify.parse_spotify_url(req.url)
+    if not track_id:
+        raise HTTPException(status_code=400, detail="Could not parse Spotify track ID from URL")
+    track = spotify.get_track(track_id)
+    if not track:
+        raise HTTPException(status_code=404, detail="Track not found on Spotify")
+    return {"data": [track]}
+
+
+@app.post("/spotify/audio-features")
+async def spotify_audio_features(track_ids: list[str]):
+    """Get audio features for a list of Spotify track IDs."""
+    if not spotify.is_configured():
+        raise HTTPException(status_code=400, detail="Spotify not configured")
+    if len(track_ids) > 100:
+        raise HTTPException(status_code=400, detail="Maximum 100 track IDs per request")
+    features = spotify.get_audio_features(track_ids)
+    return {"data": features}
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)

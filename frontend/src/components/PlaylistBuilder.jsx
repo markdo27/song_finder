@@ -1,100 +1,104 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import {
-  listPlaylists, createPlaylist, deletePlaylist,
-  addTrackToPlaylist, removeTrackFromPlaylist, getPlaylist,
-} from '../api/cosine';
+
+const STORAGE_KEY = 'songfinder_playlists';
+
+function loadFromStorage() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function saveToStorage(playlists) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(playlists));
+}
+
+function generateId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
 
 export default function PlaylistBuilder({ onTrackPlay, apiKeySet }) {
-  const [playlists, setPlaylists] = useState([]);
+  const [playlists, setPlaylists] = useState(loadFromStorage);
   const [activeId, setActiveId] = useState(null);
   const [activeTracks, setActiveTracks] = useState([]);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const loadPlaylists = useCallback(async () => {
-    if (!apiKeySet) return;
-    try {
-      setLoading(true);
-      const data = await listPlaylists();
-      setPlaylists(data);
-      if (data.length > 0 && !activeId) {
-        setActiveId(data[0].id);
-      }
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    if (playlists.length > 0 && !activeId) {
+      setActiveId(playlists[0].id);
     }
-  }, [apiKeySet, activeId]);
+  }, [playlists, activeId]);
 
-  const loadPlaylistTracks = useCallback(async (id) => {
-    if (!id) return;
-    try {
-      const data = await getPlaylist(id);
-      setActiveTracks(data.tracks || []);
-    } catch {
+  useEffect(() => {
+    if (activeId) {
+      const pl = playlists.find(p => p.id === activeId);
+      setActiveTracks(pl?.tracks || []);
+    } else {
       setActiveTracks([]);
     }
-  }, []);
-
-  useEffect(() => { loadPlaylists(); }, [loadPlaylists]);
-  useEffect(() => { if (activeId) loadPlaylistTracks(activeId); }, [activeId, loadPlaylistTracks]);
+  }, [activeId, playlists]);
 
   // Expose addTrack method via window (hacky but avoids prop drilling)
   useEffect(() => {
-    window.__songFinder_addToPlaylist = async (track) => {
+    window.__songFinder_addToPlaylist = (track) => {
       if (!activeId) {
         alert('Create or select a playlist first!');
         return;
       }
-      try {
-        await addTrackToPlaylist(activeId, track.id);
-        await loadPlaylistTracks(activeId);
-      } catch (e) {
-        setError(e.message);
-      }
+      setPlaylists(prev => {
+        const updated = prev.map(p =>
+          p.id === activeId
+            ? { ...p, tracks: [...(p.tracks || []), track] }
+            : p
+        );
+        saveToStorage(updated);
+        return updated;
+      });
     };
     return () => { delete window.__songFinder_addToPlaylist; };
-  }, [activeId, loadPlaylistTracks]);
+  }, [activeId]);
 
-  const handleCreate = async (e) => {
+  const handleCreate = (e) => {
     e?.preventDefault();
     if (!newName.trim()) return;
-    try {
-      const pl = await createPlaylist(newName.trim());
-      setPlaylists(prev => [...prev, pl]);
-      setActiveId(pl.id);
-      setActiveTracks([]);
-      setCreating(false);
-      setNewName('');
-    } catch (e) {
-      setError(e.message);
-    }
+    const newPl = { id: generateId(), name: newName.trim(), tracks: [] };
+    setPlaylists(prev => {
+      const updated = [...prev, newPl];
+      saveToStorage(updated);
+      return updated;
+    });
+    setActiveId(newPl.id);
+    setActiveTracks([]);
+    setCreating(false);
+    setNewName('');
   };
 
-  const handleRemoveTrack = async (trackId) => {
+  const handleRemoveTrack = (trackId) => {
     if (!activeId) return;
-    try {
-      await removeTrackFromPlaylist(activeId, trackId);
-      setActiveTracks(prev => prev.filter(t => t.id !== trackId));
-    } catch (e) {
-      setError(e.message);
-    }
+    setPlaylists(prev => {
+      const updated = prev.map(p =>
+        p.id === activeId
+          ? { ...p, tracks: (p.tracks || []).filter(t => t.id !== trackId) }
+          : p
+      );
+      saveToStorage(updated);
+      return updated;
+    });
   };
 
-  const handleDeletePlaylist = async (id) => {
+  const handleDeletePlaylist = (id) => {
     if (!confirm('Delete this playlist?')) return;
-    try {
-      await deletePlaylist(id);
-      setPlaylists(prev => prev.filter(p => p.id !== id));
-      if (activeId === id) {
-        setActiveId(null);
-        setActiveTracks([]);
-      }
-    } catch (e) {
-      setError(e.message);
+    setPlaylists(prev => {
+      const updated = prev.filter(p => p.id !== id);
+      saveToStorage(updated);
+      return updated;
+    });
+    if (activeId === id) {
+      setActiveId(null);
+      setActiveTracks([]);
     }
   };
 
@@ -109,7 +113,7 @@ export default function PlaylistBuilder({ onTrackPlay, apiKeySet }) {
         <div className="playlist-empty">
           <div className="playlist-empty-icon">🔑</div>
           <div className="playlist-empty-text">
-            Add your cosine.club API key in Settings to enable playlists.
+            Add your Spotify credentials in Settings to enable playlists.
           </div>
         </div>
       </aside>
@@ -159,9 +163,7 @@ export default function PlaylistBuilder({ onTrackPlay, apiKeySet }) {
 
       {/* Playlist selector */}
       <div className="playlist-list">
-        {loading && !playlists.length ? (
-          <div style={{ padding: 'var(--space-md)', color: 'var(--text-muted)', fontSize: '0.82rem' }}>Loading…</div>
-        ) : playlists.length === 0 ? (
+        {playlists.length === 0 ? (
           <div style={{ padding: 'var(--space-sm)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>No playlists yet</div>
         ) : (
           playlists.map(pl => (
@@ -172,7 +174,7 @@ export default function PlaylistBuilder({ onTrackPlay, apiKeySet }) {
             >
               <span style={{ fontSize: '0.85rem' }}>📁</span>
               <span className="playlist-item-name">{pl.name}</span>
-              <span className="playlist-item-count">{pl.track_count}</span>
+              <span className="playlist-item-count">{(pl.tracks || []).length}</span>
               <button
                 style={{ marginLeft: 4, fontSize: '0.72rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', opacity: 0.6 }}
                 onClick={e => { e.stopPropagation(); handleDeletePlaylist(pl.id); }}
@@ -202,7 +204,7 @@ export default function PlaylistBuilder({ onTrackPlay, apiKeySet }) {
                 <div className="playlist-track-name">{track.track}</div>
                 <div className="playlist-track-artist">{track.artist}</div>
               </div>
-              {track.video_uri && (
+              {(track.preview_url || track.video_uri) && (
                 <button
                   className="card-btn play"
                   style={{ fontSize: '0.72rem', padding: '3px 8px' }}
@@ -226,17 +228,6 @@ export default function PlaylistBuilder({ onTrackPlay, apiKeySet }) {
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', padding: 'var(--space-xs)', alignSelf: 'center' }}>
             {activeTracks.length} track{activeTracks.length !== 1 ? 's' : ''}
           </div>
-          {playlists.find(p => p.id === activeId)?.public_id && (
-            <a
-              href={`https://cosine.club/playlists/${playlists.find(p => p.id === activeId)?.public_id}-${playlists.find(p => p.id === activeId)?.slug}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="playlist-action-btn"
-              style={{ textDecoration: 'none' }}
-            >
-              ↗ View on cosine.club
-            </a>
-          )}
         </div>
       )}
     </aside>
