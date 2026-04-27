@@ -1,35 +1,46 @@
 /**
  * cosine.js — cosine.club API wrapper
- * Docs: https://registry.scalar.com/@cosine/apis/cosineclub-api
  *
- * In dev: calls /cosine-api/* → proxied by Vite to https://cosine.club/api/v1
- * In production (Vercel): calls https://cosine.club/api/v1 directly (CORS supported)
+ * In dev:  calls /cosine-api/* → Vite proxies to cosine.club (key from .env.local)
+ * In prod: calls /api/cosine/* → Vercel serverless proxy adds the key server-side
+ *          (no API key needed in the browser at all)
  */
 
-const BASE_URL = import.meta.env.PROD
-  ? 'https://cosine.club/api/v1'
-  : '/cosine-api';
+const IS_PROD = import.meta.env.PROD;
+const BASE_URL = IS_PROD ? '/api/cosine' : '/cosine-api';
 
+// In production the key lives in the server-side proxy env var.
+// In dev it comes from .env.local VITE_COSINE_API_KEY or localStorage.
 export function getApiKey() {
-  return localStorage.getItem('cosine_api_key') || '';
+  return (
+    localStorage.getItem('cosine_api_key') ||
+    import.meta.env.VITE_COSINE_API_KEY ||
+    ''
+  );
 }
 
 export function hasApiKey() {
-  return !!getApiKey();
+  // In production the proxy always has the key → always "available"
+  return IS_PROD || !!getApiKey();
 }
 
 async function request(path, options = {}) {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error('No API key. Add your cosine.club API key in Settings.');
+  const headers = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'song-finder/1.0',
+    ...(options.headers || {}),
+  };
+
+  // Dev only: attach key from env/localStorage (proxy doesn't add it)
+  if (!IS_PROD) {
+    const apiKey = getApiKey();
+    if (!apiKey) throw new Error('No API key. Add your cosine.club API key in Settings.');
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
 
   const resp = await fetch(`${BASE_URL}${path}`, {
     ...options,
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'User-Agent': 'song-finder/1.0',
-      ...(options.headers || {}),
-    },
+    headers,
   });
 
   if (!resp.ok) {
@@ -42,30 +53,18 @@ async function request(path, options = {}) {
 
 // ── Track endpoints ──────────────────────────────────────────────────────────
 
-/**
- * Search tracks by text query.
- * Returns array of track objects: { id, name, artist, track, source, ... }
- */
 export async function searchTracks(query, limit = 10) {
   const params = new URLSearchParams({ q: query, limit });
   const data = await request(`/search?${params}`);
   return data.data || [];
 }
 
-/**
- * Lookup track(s) by URL (YouTube, Discogs, SoundCloud).
- * Returns array of track objects.
- */
 export async function lookupByUrl(url) {
   const params = new URLSearchParams({ url });
   const data = await request(`/tracks/lookup?${params}`);
   return data.data || [];
 }
 
-/**
- * Get similar tracks for a given track ID.
- * Returns { source, similar, meta }
- */
 export async function getSimilarTracks(trackId, filters = {}) {
   const params = new URLSearchParams({ limit: 20, ...filters });
   const data = await request(`/tracks/${trackId}/similar?${params}`);
@@ -76,9 +75,6 @@ export async function getSimilarTracks(trackId, filters = {}) {
   };
 }
 
-/**
- * Get track details by ID.
- */
 export async function getTrack(trackId) {
   const data = await request(`/tracks/${trackId}`);
   return data.data;
@@ -122,12 +118,10 @@ export async function getPlaylist(id) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Convert cosine score (0–1) to integer percentage */
 export function scoreToPercent(score) {
   return Math.round((score || 0) * 100);
 }
 
-/** Detect source type from URL for icon display */
 export function detectUrlSource(url = '') {
   if (!url) return null;
   if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
