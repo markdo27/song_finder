@@ -49,16 +49,11 @@ export default function App() {
   // UI state
   const [showSettings, setShowSettings] = useState(false);
   const [backendOnline, setBackendOnline] = useState(null);
-  const [apiKeySet, setApiKeySet] = useState(hasApiKey());
+  const [apiKeySet] = useState(true); // Always true — key is pre-configured server-side
 
   // Check backend health on mount
   useEffect(() => {
     checkBackendHealth().then(ok => setBackendOnline(ok));
-  }, []);
-
-  // Show settings on first launch if no API key
-  useEffect(() => {
-    if (!hasApiKey()) setShowSettings(true);
   }, []);
 
   // --- Search by text query ---

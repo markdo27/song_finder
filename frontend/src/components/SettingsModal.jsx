@@ -1,29 +1,14 @@
 import React, { useState } from 'react';
-import { getApiKey, searchTracks } from '../api/cosine';
+import { hasApiKey } from '../api/cosine';
 
 export default function SettingsModal({ onClose, onSave }) {
-  const [apiKey, setApiKey] = useState(getApiKey());
   const [backendUrl, setBackendUrl] = useState(localStorage.getItem('backend_url') || 'http://localhost:8000');
   const [saved, setSaved] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testError, setTestError] = useState('');
 
-  const handleSave = async () => {
-    localStorage.setItem('cosine_api_key', apiKey.trim());
+  const handleSave = () => {
     localStorage.setItem('backend_url', backendUrl.trim() || 'http://localhost:8000');
-
-    setTesting(true);
-    setTestError('');
-    try {
-      // Validate by running a lightweight search
-      await searchTracks('test', 1);
-      setSaved(true);
-      setTimeout(() => { setSaved(false); onSave?.(); onClose?.(); }, 800);
-    } catch (e) {
-      setTestError(e.message);
-    } finally {
-      setTesting(false);
-    }
+    setSaved(true);
+    setTimeout(() => { setSaved(false); onSave?.(); onClose?.(); }, 600);
   };
 
   return (
@@ -34,31 +19,29 @@ export default function SettingsModal({ onClose, onSave }) {
           <button className="close-btn" onClick={onClose}>✕</button>
         </div>
 
+        {/* API status — key is pre-configured server-side on Vercel */}
         <div className="settings-field">
-          <label className="settings-label" htmlFor="cosine-api-key">
-            cosine.club API Key
-          </label>
-          <input
-            id="cosine-api-key"
-            className="settings-input"
-            type="password"
-            value={apiKey}
-            onChange={e => setApiKey(e.target.value)}
-            placeholder="Your cosine.club API key…"
-            spellCheck={false}
-            autoComplete="off"
-          />
+          <label className="settings-label">cosine.club API</label>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '10px 14px',
+            background: 'rgba(34,197,94,0.08)',
+            border: '1px solid rgba(34,197,94,0.25)',
+            borderRadius: 'var(--radius-sm)',
+            fontSize: '0.85rem',
+            color: 'var(--score-high)',
+          }}>
+            ✓ API key configured — ready to use
+          </div>
           <div className="settings-hint">
-            Get your free API key at{' '}
-            <a href="https://cosine.club/account/api" target="_blank" rel="noopener noreferrer">
-              cosine.club/account/api
-            </a>
+            The cosine.club API key is pre-configured. No action needed.
           </div>
         </div>
 
         <div className="settings-field">
           <label className="settings-label" htmlFor="backend-url-input">
-            Analyzer Backend URL <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span>
+            Analyzer Backend URL{' '}
+            <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span>
           </label>
           <input
             id="backend-url-input"
@@ -70,26 +53,20 @@ export default function SettingsModal({ onClose, onSave }) {
             spellCheck={false}
           />
           <div className="settings-hint">
-            Local Python backend for BPM / key analysis. Start it with{' '}
+            Local Python backend for BPM / key analysis. Start with{' '}
             <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8em', color: 'var(--text-accent)' }}>
               python backend/main.py
             </code>
           </div>
         </div>
 
-        {testError && (
-          <div className="error-banner" style={{ marginBottom: 'var(--space-md)', fontSize: '0.82rem' }}>
-            ⚠ {testError}
-          </div>
-        )}
-
         <div className="divider" />
 
         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 'var(--space-lg)', lineHeight: 1.6 }}>
           <strong style={{ color: 'var(--text-secondary)' }}>About:</strong><br />
-          Song Finder uses the <strong>cosine.club</strong> music similarity API to find tracks
-          that sound like what you love. Paste a YouTube, Discogs, or SoundCloud URL — or
-          search by artist + track name. Optional local backend adds BPM &amp; key analysis.
+          Song Finder uses <strong>cosine.club</strong> vector similarity to find tracks that sound alike.
+          Paste a YouTube, Discogs, or SoundCloud URL — or search by artist + track name.
+          Specialises in underground &amp; electronic music.
         </div>
 
         <div className="modal-footer">
@@ -98,9 +75,8 @@ export default function SettingsModal({ onClose, onSave }) {
             id="settings-save-btn"
             className="btn btn-primary"
             onClick={handleSave}
-            disabled={testing || !apiKey.trim()}
           >
-            {testing ? 'Testing…' : saved ? '✓ Saved!' : 'Save Settings'}
+            {saved ? '✓ Saved!' : 'Save Settings'}
           </button>
         </div>
       </div>

@@ -1,33 +1,35 @@
 /**
  * cosine.js — cosine.club API wrapper
- * Calls https://cosine.club/api/v1 directly.
- * API key is baked in at build time via VITE_COSINE_API_KEY.
- * In local dev Vite also proxies /cosine-api as a fallback.
+ *
+ * Production (Vercel): calls /api/cosine/* → serverless proxy adds key server-side
+ * Local dev:           calls /cosine-api/* → Vite proxies to cosine.club with key from .env.local
  */
 
-const BASE_URL = 'https://cosine.club/api/v1';
-const BAKED_KEY = import.meta.env.VITE_COSINE_API_KEY || '';
+const IS_PROD = import.meta.env.PROD;
+const BASE_URL = IS_PROD ? '/api/cosine' : '/cosine-api';
 
+// Dev: key from .env.local VITE_COSINE_API_KEY or localStorage
+// Prod: key is server-side only; browser doesn't need it
 export function getApiKey() {
-  return localStorage.getItem('cosine_api_key') || BAKED_KEY;
+  return localStorage.getItem('cosine_api_key') || import.meta.env.VITE_COSINE_API_KEY || '';
 }
 
 export function hasApiKey() {
-  return !!getApiKey();
+  // In prod the proxy always has the key
+  return IS_PROD || !!getApiKey();
 }
 
 async function request(path, options = {}) {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error('No API key — open Settings and add your cosine.club key.');
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
 
-  const resp = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-  });
+  // Dev only: attach key in the Authorization header (Vite proxy forwards it)
+  if (!IS_PROD) {
+    const key = getApiKey();
+    if (!key) throw new Error('No API key — open Settings and add your cosine.club key.');
+    headers['Authorization'] = `Bearer ${key}`;
+  }
+
+  const resp = await fetch(`${BASE_URL}${path}`, { ...options, headers });
 
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
@@ -106,8 +108,6 @@ export async function getPlaylist(id) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Convert cosine score (0–1) to integer percentage */
 export function scoreToPercent(score) {
   return Math.round((score || 0) * 100);
 }
-
